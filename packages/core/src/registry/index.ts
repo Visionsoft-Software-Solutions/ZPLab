@@ -108,6 +108,10 @@ export const BARCODE_1D_TYPES: ReadonlySet<string> = new Set(
   (Object.keys(ObjectRegistry) as LeafType[]).filter((t) => ObjectRegistry[t].barcodeClass === '1d'),
 );
 
+/** True when the symbology ties its locked height to the module, so a width drag moves the height as well. */
+export const heightFollowsModule = (entry: (typeof ObjectRegistry)[LeafType] | undefined): boolean =>
+  !!entry?.heightLocked && entry.moduleWidthProp !== undefined;
+
 export const STACKED_2D_TYPES: ReadonlySet<string> = new Set(
   (Object.keys(ObjectRegistry) as LeafType[]).filter((t) => ObjectRegistry[t].barcodeClass === 'stacked2d'),
 );

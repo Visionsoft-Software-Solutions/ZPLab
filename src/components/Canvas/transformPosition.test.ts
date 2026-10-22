@@ -170,6 +170,16 @@ describe("FT barcode rotation anchor (render <-> model lockstep)", () => {
       clearMeasuredBounds(o.id);
     }
   });
+  it("moves an FT DataBar by the committed height, which grows with the module", () => {
+    const o = otherType("gs1databar", { content: "0112345678901", symbology: 1, magnification: 2, rotation: "N" });
+    const tl = renderedTopLeftFromModel(o);
+    const same = modelPositionFromRenderedTopLeft(o, tl.x, tl.y, 120, 120);
+    const doubled = modelPositionFromRenderedTopLeft(o, tl.x, tl.y, 240, 240);
+    expect(same).toEqual({ x: 400, y: 300 });
+    expect(doubled.y - same.y).toBe(120);
+    clearMeasuredBounds(o.id);
+  });
+
   it("round-trips a stacked FT barcode (pdf417) for all rotations", () => {
     for (const rotation of ["N", "R", "I", "B"] as const) {
       const o = otherType("pdf417", { content: "x", rotation });

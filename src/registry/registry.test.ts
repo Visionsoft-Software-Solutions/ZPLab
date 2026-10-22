@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ObjectRegistry, getEntry } from '@zplab/core/registry';
+import { BARCODE_1D_TYPES, ObjectRegistry, getEntry, heightFollowsModule } from '@zplab/core/registry';
+import { moduleScaledProps } from '@zplab/core/types/propSpec';
 import type { LabelObjectBase } from '@zplab/core/types/LabelObject';
 import { defined } from '../test/helpers';
 import { qualityPatch, type DataMatrixProps } from '@zplab/core/registry/datamatrix';
@@ -662,23 +663,36 @@ describe('ObjectRegistry', () => {
     }
   });
 
-  // Without commitTransform or uniformScaleProp the drag is a silent
-  // no-op (was the aztec regression). heightLocked code-2d types skip the
-  // transformer entirely so they're exempt; a heightLocked code-1d keeps
-  // its module-width axis, so it still needs a commit.
+  // Without commitTransform or uniformScaleProp the drag is a silent no-op, the aztec regression.
   it('every resizable code-2d type can commit a resize', () => {
     for (const [key, def] of Object.entries(ObjectRegistry)) {
       if (def.group !== 'code-2d') continue;
+      // A heightLocked code-2d has no resize axis at all.
       if (def.heightLocked) continue;
       const hasCommit = !!def.commitTransform || !!def.uniformScaleProp;
       expect(hasCommit, `${key} is missing commitTransform or uniformScaleProp`).toBe(true);
     }
   });
 
-  it('a heightLocked code-1d type still commits the module-width axis', () => {
+  it('a heightLocked 1D type still commits the module-width axis', () => {
     for (const [key, def] of Object.entries(ObjectRegistry)) {
-      if (def.group !== 'code-1d' || !def.heightLocked) continue;
+      if (!BARCODE_1D_TYPES.has(key) || !def.heightLocked) continue;
       expect(def.commitTransform, `${key} needs commitTransform for the width drag`).toBeTypeOf('function');
+    }
+  });
+
+  it('ties the height to the module only where the symbology locks it and names the module prop', () => {
+    expect(heightFollowsModule(getEntry('gs1databar'))).toBe(true);
+    expect(heightFollowsModule(getEntry('maxicode'))).toBe(false);
+    expect(heightFollowsModule(getEntry('code128'))).toBe(false);
+    expect(heightFollowsModule(undefined)).toBe(false);
+  });
+
+  // The hook falls back to the ^BY name, so every 1D type must scale the prop it ends up writing.
+  it('every 1D type scales the module prop the width drag writes', () => {
+    for (const [key, def] of Object.entries(ObjectRegistry)) {
+      if (!BARCODE_1D_TYPES.has(key)) continue;
+      expect(moduleScaledProps(def.propSpecs), key).toContain(def.moduleWidthProp ?? 'moduleWidth');
     }
   });
 

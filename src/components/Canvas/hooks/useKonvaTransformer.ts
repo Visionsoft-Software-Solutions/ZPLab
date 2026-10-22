@@ -12,6 +12,7 @@ import {
   BARCODE_1D_TYPES,
   STACKED_2D_TYPES,
   getEntry,
+  heightFollowsModule,
 } from "@zplab/core/registry";
 import type { LeafObject } from "@zplab/core/registry";
 import { resolveBlockResizeMode } from "@zplab/core/registry/transformHelpers";
@@ -152,12 +153,15 @@ function supportsCenteredResize(type: string): boolean {
   );
 }
 
-/** The prop a 1D-family width drag drives: "moduleWidth" on ^BY symbologies,
- *  else the type's only module-scaled prop (GS1 DataBar's "magnification").
- *  Undefined when the type has none. */
-function moduleWidthPropOf(type: string): string | undefined {
-  const names = moduleScaledProps(getEntry(type)?.propSpecs ?? {});
-  return names.includes("moduleWidth") ? "moduleWidth" : names[0];
+/** The ^BY name is the default, and the registry invariant pins it for every 1D type. */
+function moduleWidthPropOf(type: string): string {
+  return getEntry(type)?.moduleWidthProp ?? "moduleWidth";
+}
+
+/** The registry types its entries as any, so the one read through the declared name holds the cast. */
+function moduleValueOf(props: object, mwProp: string): number | undefined {
+  const v = (props as Record<string, unknown>)[mwProp];
+  return typeof v === "number" ? v : undefined;
 }
 
 interface Options {
@@ -295,9 +299,6 @@ export function useKonvaTransformer({
   const barcodeReflowRef = useRef<
     | (BarcodeMwReflowStart & {
         mode: "mw";
-        /** The module-width prop the drag writes: "moduleWidth" on ^BY 1D
-         *  symbologies, the sole scale:'module' prop elsewhere (GS1 DataBar's
-         *  "magnification"). */
         mwProp: string;
         uprightW0: number;
         uprightH0: number;
@@ -510,10 +511,7 @@ export function useKonvaTransformer({
     selectedIds.length > 1
       ? undefined
       : getEntry(singleType)?.heightLocked
-        ? // heightLocked bars the height axis, not the module-width one: a
-          // fixed-height 1D symbology (GS1 DataBar) still resizes through its
-          // module prop, so that axis's anchors mount. The axis turns with
-          // R/B rotation like the 1D anchor list below.
+        ? // heightLocked bars the height axis only, so a 1D symbology keeps its module-width anchors.
           BARCODE_1D_TYPES.has(singleType) && singleSelected && !isGroup(singleSelected)
             ? isAxisSwapped(objectRotation(singleSelected.props))
               ? ["top-center", "bottom-center"]
@@ -670,17 +668,13 @@ export function useKonvaTransformer({
         // Konva Group .width() returns its attr (0 here); the visible
         // bbox comes from the children via getClientRect.
         const rect = naturalRect(node);
-        // The prop name varies ("moduleWidth" vs GS1 DataBar's
-        // "magnification"); the anchor carries the resolved value so the
-        // snap never reads the prop itself.
         const mwProp = moduleWidthPropOf(obj.type);
-        const mwValue = mwProp ? (obj.props as unknown as Record<string, unknown>)[mwProp] : undefined;
         return {
           kind: "moduleWidth",
-          moduleWidthBounds: editBounds(mwProp ? getEntry(obj.type)?.propSpecs[mwProp] : undefined),
+          moduleWidthBounds: editBounds(getEntry(obj.type)?.propSpecs[mwProp]),
           nodeWidth: rect.width,
           nodeHeight: rect.height,
-          moduleWidth: typeof mwValue === "number" ? mwValue : 0,
+          moduleWidth: moduleValueOf(obj.props, mwProp) as number,
           rotation: objectRotation(obj.props),
         };
       }
@@ -795,7 +789,7 @@ export function useKonvaTransformer({
       const cache = getMeasuredSnapshot().get(singleId);
       const p = obj.props as unknown as Record<string, number | undefined>;
       const mwProp = moduleWidthPropOf(obj.type);
-      const mw0 = mwProp ? p[mwProp] : undefined;
+      const mw0 = moduleValueOf(obj.props, mwProp);
       if (edges && cache) {
         const leftX = node.x();
         const topY = node.y();
@@ -810,7 +804,7 @@ export function useKonvaTransformer({
         const uprightH0 = cache.uprightBarHDots ?? (rowStacked ? 0 : (p.height ?? 0));
         const mwAxisActive = swapped ? edges.top || edges.bottom : edges.left || edges.right;
         const heightAxisActive = swapped ? edges.left || edges.right : edges.top || edges.bottom;
-        if (mwAxisActive && mwProp && typeof mw0 === "number" && mw0 > 0) {
+        if (mwAxisActive && mw0 !== undefined && mw0 > 0) {
           const extraWidths = moduleScaledProps(getEntry(obj.type)?.propSpecs ?? {})
             .filter((name) => name !== mwProp)
             .flatMap((name): [string, number][] => {
@@ -1043,8 +1037,8 @@ export function useKonvaTransformer({
       }
       const swapped = isAxisSwapped(br.rotation);
       if (br.mode === "mw") {
-        const mwCurrent = (cur.props as unknown as Record<string, unknown>)[br.mwProp] as number | undefined;
-        if (typeof mwCurrent !== "number" || !(mwCurrent > 0)) return;
+        const mwCurrent = moduleValueOf(cur.props, br.mwProp);
+        if (mwCurrent === undefined || !(mwCurrent > 0)) return;
         const frameExtentPx = swapped ? natural.height * sy : natural.width * sx;
         const geo = barcodeMwReflowGeometry(br, frameExtentPx, centered);
         if (!geo) return;
@@ -1059,15 +1053,18 @@ export function useKonvaTransformer({
           // its stack extent moves during a WIDTH drag too.
           const widened = { ...cur.props, [br.mwProp]: geo.moduleWidth };
           const mwStack = rowStackOf(getEntry(cur.type), br, widened);
-          const stackH = mwStack
+          // A module-proportional height takes the same ratio, or the FT anchor inversion stores a y one height off.
+          const uprightH = mwStack
             ? stackExtentDots(mwStack, br.snapshot.height ?? 0)
-            : br.uprightH0;
+            : heightFollowsModule(getEntry(cur.type))
+              ? br.uprightH0 * ratio
+              : br.uprightH0;
           const model = modelPositionFromRenderedTopLeft(
             cur,
             pxToDots(geo.targetXPx - objectsOffsetX, scale, dpmm),
             pxToDots(geo.targetYPx - labelOffsetY, scale, dpmm),
             br.uprightW0 * ratio,
-            stackH,
+            uprightH,
           );
           // A second module width follows the same ratio so the composite
           // keeps its proportions mid-drag.
@@ -1360,7 +1357,7 @@ export function useKonvaTransformer({
               resizeMode: blockResizeModeRef.current,
             })
           : br.mode === "mw"
-            ? { [br.mwProp]: cp[br.mwProp] }
+            ? { [br.mwProp]: moduleValueOf(cur.props, br.mwProp) }
             : { height: Math.max(1, snap(Math.round(cp.height ?? 1))) };
         commit = {
           restore: {

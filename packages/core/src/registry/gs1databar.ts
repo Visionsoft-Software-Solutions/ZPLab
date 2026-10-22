@@ -25,7 +25,7 @@ export interface Gs1DatabarProps {
 
 // ZPL ^BR height parameter. Zebra firmware overrides this with each variant's
 // intrinsic bar height for sym 1–5; only Expanded Stacked (sym 7) uses it as
-// per-row height. Hardcoded because heightLocked: true forbids resizing.
+// per-row height. Hardcoded because the type models no height prop.
 const ZPL_HEIGHT_PLACEHOLDER = 100;
 
 // Stable specs so the sanitiser/regex WeakMap caches hit across keystrokes.
@@ -74,9 +74,8 @@ export const gs1databar: ObjectTypeCore<Gs1DatabarProps> = {
   placeholderContent: '0112345678901',
   defaultSize: { width: 300, height: 120 },
   heightLocked: true,
+  moduleWidthProp: 'magnification',
 
-  // The locked axis is the height (firmware-overridden for sym 1-5, a per-row
-  // height for sym 7); the width-axis drag maps onto magnification 1-10.
   commitTransform: (obj, ctx) => {
     const { min, max } = editBounds(GS1DATABAR_PROP_SPECS.magnification);
     const { esx } = effectiveScale(obj.props.rotation, ctx);

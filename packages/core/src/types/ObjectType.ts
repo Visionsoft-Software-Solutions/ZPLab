@@ -93,6 +93,9 @@ export interface ObjectTypeCore<P extends object = object> {
   /** Integer-module 2D symbology (QR/Aztec/DataMatrix): the prop a resize
    *  snaps and commits. Implies uniformScale. */
   uniformScaleProp?: keyof P & string;
+  /** Linear symbology whose module axis is not `moduleWidth`: the prop the width drag snaps and commits.
+   *  With `heightLocked` it also says the bar height is module-proportional, see heightFollowsModule. */
+  moduleWidthProp?: keyof P & string;
   /** Row-stacked 1D (^B4): the height prop holds ONE row, so the reflow
    *  converts through stackExtentDots. Absent = the prop IS the extent. */
   barStack?: (
