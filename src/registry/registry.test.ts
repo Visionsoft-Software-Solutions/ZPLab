@@ -663,14 +663,22 @@ describe('ObjectRegistry', () => {
   });
 
   // Without commitTransform or uniformScaleProp the drag is a silent
-  // no-op (was the aztec regression). heightLocked types skip the
-  // transformer entirely so they're exempt.
+  // no-op (was the aztec regression). heightLocked code-2d types skip the
+  // transformer entirely so they're exempt; a heightLocked code-1d keeps
+  // its module-width axis, so it still needs a commit.
   it('every resizable code-2d type can commit a resize', () => {
     for (const [key, def] of Object.entries(ObjectRegistry)) {
       if (def.group !== 'code-2d') continue;
       if (def.heightLocked) continue;
       const hasCommit = !!def.commitTransform || !!def.uniformScaleProp;
       expect(hasCommit, `${key} is missing commitTransform or uniformScaleProp`).toBe(true);
+    }
+  });
+
+  it('a heightLocked code-1d type still commits the module-width axis', () => {
+    for (const [key, def] of Object.entries(ObjectRegistry)) {
+      if (def.group !== 'code-1d' || !def.heightLocked) continue;
+      expect(def.commitTransform, `${key} needs commitTransform for the width drag`).toBeTypeOf('function');
     }
   });
 

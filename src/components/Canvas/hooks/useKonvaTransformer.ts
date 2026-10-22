@@ -152,6 +152,14 @@ function supportsCenteredResize(type: string): boolean {
   );
 }
 
+/** The prop a 1D-family width drag drives: "moduleWidth" on ^BY symbologies,
+ *  else the type's only module-scaled prop (GS1 DataBar's "magnification").
+ *  Undefined when the type has none. */
+function moduleWidthPropOf(type: string): string | undefined {
+  const names = moduleScaledProps(getEntry(type)?.propSpecs ?? {});
+  return names.includes("moduleWidth") ? "moduleWidth" : names[0];
+}
+
 interface Options {
   transformerRef: React.RefObject<Konva.Transformer | null>;
   stageRef: React.RefObject<Konva.Stage | null>;
@@ -287,6 +295,10 @@ export function useKonvaTransformer({
   const barcodeReflowRef = useRef<
     | (BarcodeMwReflowStart & {
         mode: "mw";
+        /** The module-width prop the drag writes: "moduleWidth" on ^BY 1D
+         *  symbologies, the sole scale:'module' prop elsewhere (GS1 DataBar's
+         *  "magnification"). */
+        mwProp: string;
         uprightW0: number;
         uprightH0: number;
         snapshot: { x: number; y: number; moduleWidth: number; height?: number };
@@ -498,7 +510,15 @@ export function useKonvaTransformer({
     selectedIds.length > 1
       ? undefined
       : getEntry(singleType)?.heightLocked
-        ? []
+        ? // heightLocked bars the height axis, not the module-width one: a
+          // fixed-height 1D symbology (GS1 DataBar) still resizes through its
+          // module prop, so that axis's anchors mount. The axis turns with
+          // R/B rotation like the 1D anchor list below.
+          BARCODE_1D_TYPES.has(singleType) && singleSelected && !isGroup(singleSelected)
+            ? isAxisSwapped(objectRotation(singleSelected.props))
+              ? ["top-center", "bottom-center"]
+              : ["middle-left", "middle-right"]
+            : []
         : BARCODE_1D_TYPES.has(singleType)
           ? [
               "top-center",
@@ -650,12 +670,17 @@ export function useKonvaTransformer({
         // Konva Group .width() returns its attr (0 here); the visible
         // bbox comes from the children via getClientRect.
         const rect = naturalRect(node);
+        // The prop name varies ("moduleWidth" vs GS1 DataBar's
+        // "magnification"); the anchor carries the resolved value so the
+        // snap never reads the prop itself.
+        const mwProp = moduleWidthPropOf(obj.type);
+        const mwValue = mwProp ? (obj.props as unknown as Record<string, unknown>)[mwProp] : undefined;
         return {
           kind: "moduleWidth",
-          moduleWidthBounds: editBounds(getEntry(obj.type)?.propSpecs.moduleWidth),
+          moduleWidthBounds: editBounds(mwProp ? getEntry(obj.type)?.propSpecs[mwProp] : undefined),
           nodeWidth: rect.width,
           nodeHeight: rect.height,
-          moduleWidth: (obj.props as { moduleWidth: number }).moduleWidth,
+          moduleWidth: typeof mwValue === "number" ? mwValue : 0,
           rotation: objectRotation(obj.props),
         };
       }
@@ -768,7 +793,9 @@ export function useKonvaTransformer({
       const rot = objectRotation(obj.props);
       const swapped = isAxisSwapped(rot);
       const cache = getMeasuredSnapshot().get(singleId);
-      const p = obj.props as { moduleWidth?: number; height?: number };
+      const p = obj.props as unknown as Record<string, number | undefined>;
+      const mwProp = moduleWidthPropOf(obj.type);
+      const mw0 = mwProp ? p[mwProp] : undefined;
       if (edges && cache) {
         const leftX = node.x();
         const topY = node.y();
@@ -783,26 +810,27 @@ export function useKonvaTransformer({
         const uprightH0 = cache.uprightBarHDots ?? (rowStacked ? 0 : (p.height ?? 0));
         const mwAxisActive = swapped ? edges.top || edges.bottom : edges.left || edges.right;
         const heightAxisActive = swapped ? edges.left || edges.right : edges.top || edges.bottom;
-        if (mwAxisActive && typeof p.moduleWidth === "number" && p.moduleWidth > 0) {
+        if (mwAxisActive && mwProp && typeof mw0 === "number" && mw0 > 0) {
           const extraWidths = moduleScaledProps(getEntry(obj.type)?.propSpecs ?? {})
-            .filter((name) => name !== "moduleWidth")
+            .filter((name) => name !== mwProp)
             .flatMap((name): [string, number][] => {
-              const v = (p as Record<string, unknown>)[name];
+              const v = p[name];
               return typeof v === "number" ? [[name, v]] : [];
             });
           barcodeReflowRef.current = {
             mode: "mw",
+            mwProp,
             rotation: rot,
             edges,
             ...box,
-            mw0: p.moduleWidth,
-            mwBounds: editBounds(getEntry(obj.type)?.propSpecs.moduleWidth),
+            mw0,
+            mwBounds: editBounds(getEntry(obj.type)?.propSpecs[mwProp]),
             uprightW0: cache.uprightBarWDots ?? 0,
             uprightH0,
             // height rides along: normalizeChanges may re-clamp it as a side
             // effect of the per-tick moduleWidth writes (code49), and the undo
             // baseline must restore that too.
-            snapshot: { x: obj.x, y: obj.y, moduleWidth: p.moduleWidth, height: p.height },
+            snapshot: { x: obj.x, y: obj.y, moduleWidth: mw0, height: p.height },
             extraWidths0: Object.fromEntries(extraWidths.map(([name, v]) => [name, v])),
             extraBounds: Object.fromEntries(extraWidths.map(([name]) => [name, editBounds(getEntry(obj.type)?.propSpecs[name])])),
             changed: false,
@@ -1015,7 +1043,7 @@ export function useKonvaTransformer({
       }
       const swapped = isAxisSwapped(br.rotation);
       if (br.mode === "mw") {
-        const mwCurrent = (cur.props as { moduleWidth?: number }).moduleWidth;
+        const mwCurrent = (cur.props as unknown as Record<string, unknown>)[br.mwProp] as number | undefined;
         if (typeof mwCurrent !== "number" || !(mwCurrent > 0)) return;
         const frameExtentPx = swapped ? natural.height * sy : natural.width * sx;
         const geo = barcodeMwReflowGeometry(br, frameExtentPx, centered);
@@ -1029,7 +1057,7 @@ export function useKonvaTransformer({
           // the FO inversion ignores would corrupt the stored anchor coordinate.
           // A row-stacked type re-rounds its rows against the new module, so
           // its stack extent moves during a WIDTH drag too.
-          const widened = { ...cur.props, moduleWidth: geo.moduleWidth };
+          const widened = { ...cur.props, [br.mwProp]: geo.moduleWidth };
           const mwStack = rowStackOf(getEntry(cur.type), br, widened);
           const stackH = mwStack
             ? stackExtentDots(mwStack, br.snapshot.height ?? 0)
@@ -1052,7 +1080,7 @@ export function useKonvaTransformer({
             updateObject(id, {
               x: swapped ? br.snapshot.x : model.x,
               y: swapped ? model.y : br.snapshot.y,
-              props: { moduleWidth: geo.moduleWidth, ...extraWidths },
+              props: { [br.mwProp]: geo.moduleWidth, ...extraWidths },
             });
           });
           br.changed = true;
@@ -1316,7 +1344,7 @@ export function useKonvaTransformer({
       const cur = id ? findObjectById(getCurrentObjects(), id) : undefined;
       let commit: ReflowCommit = null;
       if (br.changed && id && cur && !isGroup(cur)) {
-        const cp = cur.props as { moduleWidth?: number; height?: number };
+        const cp = cur.props as unknown as Record<string, number | undefined>;
         // Final goes through the registry commit at identity scale (= re-commit
         // the baked props) so per-type contracts hold: grid snap for height,
         // the ^BY clamp, code49's bwip range clamp. The fallback mirrors the
@@ -1332,7 +1360,7 @@ export function useKonvaTransformer({
               resizeMode: blockResizeModeRef.current,
             })
           : br.mode === "mw"
-            ? { moduleWidth: cp.moduleWidth }
+            ? { [br.mwProp]: cp[br.mwProp] }
             : { height: Math.max(1, snap(Math.round(cp.height ?? 1))) };
         commit = {
           restore: {
@@ -1341,7 +1369,7 @@ export function useKonvaTransformer({
             props:
               br.mode === "mw"
                 ? {
-                    moduleWidth: br.snapshot.moduleWidth,
+                    [br.mwProp]: br.snapshot.moduleWidth,
                     // The undo baseline must restore the ratio-scaled extra
                     // widths too, or Ctrl+Z leaves w2 on the post-drag value.
                     ...br.extraWidths0,

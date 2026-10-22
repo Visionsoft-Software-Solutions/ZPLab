@@ -1,5 +1,5 @@
-import type { PropSpecs } from '../types/propSpec';
-import { moduleWidthSpec } from './transformHelpers';
+import { editBounds, type PropSpecs } from '../types/propSpec';
+import { clamp, effectiveScale, moduleWidthSpec } from './transformHelpers';
 import type { LabelObjectBase } from '../types/LabelObject';
 import type { ObjectTypeCore } from '../types/ObjectType';
 import { fieldPos1d, fdFieldFor } from './zplHelpers';
@@ -74,6 +74,16 @@ export const gs1databar: ObjectTypeCore<Gs1DatabarProps> = {
   placeholderContent: '0112345678901',
   defaultSize: { width: 300, height: 120 },
   heightLocked: true,
+
+  // The locked axis is the height (firmware-overridden for sym 1-5, a per-row
+  // height for sym 7); the width-axis drag maps onto magnification 1-10.
+  commitTransform: (obj, ctx) => {
+    const { min, max } = editBounds(GS1DATABAR_PROP_SPECS.magnification);
+    const { esx } = effectiveScale(obj.props.rotation, ctx);
+    return {
+      magnification: clamp(min, max, Math.round(obj.props.magnification * esx)),
+    };
+  },
 
   contentSpec: (props) =>
     GS1_DATABAR_EXPANDED_SYMBOLOGIES.has((props as Gs1DatabarProps).symbology)
